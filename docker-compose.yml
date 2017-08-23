@@ -1,0 +1,17 @@
+---
+version: '2'
+services:
+    memcached:
+        image: docker.io/memcached
+        ports:
+            - 11211:11211
+        command: memcached -m 1000 -vv
+    app:
+        build: ./
+        volumes:
+            - ./:/src
+        command: /bin/bash
+        links:
+            - memcached
+        environment:
+            MEMCACHED_HOST: memcached
