@@ -5,7 +5,7 @@ import hashlib
 from pymemcache.client.base import Client
 
 
-DEFAULT_MEMLIMIT = 5 * 1024 * 1025
+DEFAULT_MEMLIMIT = 2 * 1024 * 1025
 DEFAULT_MAX_REQS_PER_CONN = 20
 
 CACHE_FILE_CHECKSUM_KEY_PREFIX = 'checksum'
@@ -109,8 +109,9 @@ class FileCacheHandler:
             return s
 
         for index in range(chunk_count):
-            if buf['len'] >= self.max_requests or \
-                    (buf['len'] + 1) * chunk_size >= self.mem_limit:
+            # Since no of requests in get_many does not lead to conn yields
+            # we just put a memory based limit.
+            if (buf['len'] + 1) * chunk_size >= self.mem_limit:
                 yield flush()
             buf['data'].append(self._get_key(key_prefix, index))
             buf['len'] += 1
