@@ -5,24 +5,47 @@ import hashlib
 from pymemcache.client.base import Client
 
 
+DEFAULT_MEMLIMIT = 5 * 1024 * 1025
+DEFAULT_MAX_REQS_PER_CONN = 20
+
+
 class FileCacheHandler:
 
-    def __init__(self, client):
+    def __init__(self, client, max_requests=DEFAULT_MAX_REQS_PER_CONN,
+                 mem_limit=DEFAULT_MEMLIMIT):
         self.client = client
+        self.max_requests = max_requests
+        self.mem_limit = mem_limit
 
     def set(self, path):
         abspath = os.path.abspath(path)
         key_prefix = self._get_key_prefix(abspath)
         chunk_size = self._get_chunk_size(abspath)
 
+        buf = {
+            'data': {},
+            'len': 0,
+            'size': 0
+        }
+
+        def flush():
+            self.client.set_many(buf['data'])
+            buf['data'], buf['len'], buf['size'] = {}, 0, 0
+
         with open(path, 'rb') as f:
             index = 0
             while True:
+                if buf['len'] >= self.max_requests or \
+                        buf['size'] + chunk_size >= self.mem_limit:
+                    flush()
                 s = f.read(chunk_size)
                 if not s:
                     break
-                self.client.set(self._get_key(key_prefix, index), s)
+                buf['data'][self._get_key(key_prefix, index)] = s
+                buf['len'] += 1
+                buf['size'] += chunk_size
                 index += 1
+            flush()
 
         self.client.set('chunk_count_{}'.format(key_prefix), index)
 
