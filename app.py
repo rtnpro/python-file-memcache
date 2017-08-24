@@ -8,6 +8,8 @@ from pymemcache.client.base import Client
 DEFAULT_MEMLIMIT = 5 * 1024 * 1025
 DEFAULT_MAX_REQS_PER_CONN = 20
 
+CACHE_FILE_CHECKSUM_KEY_PREFIX = 'checksum'
+
 
 class FileCacheIntegrityError(Exception):
     pass
@@ -38,6 +40,7 @@ class FileCacheHandler:
 
         with open(path, 'rb') as f:
             index = 0
+            md5 = hashlib.md5()
             while True:
                 if buf['len'] >= self.max_requests or \
                         buf['size'] + chunk_size >= self.mem_limit:
@@ -46,11 +49,14 @@ class FileCacheHandler:
                 if not s:
                     break
                 buf['data'][self._get_key(key_prefix, index)] = s
+                md5.update(s)
                 buf['len'] += 1
                 buf['size'] += chunk_size
                 index += 1
             flush()
 
+        self.client.set('{}_{}'.format(
+            CACHE_FILE_CHECKSUM_KEY_PREFIX, key_prefix), md5.hexdigest())
         self.client.set('chunk_count_{}'.format(key_prefix), index)
 
     def get(self, path):
@@ -61,6 +67,12 @@ class FileCacheHandler:
         s = b''
         for index in range(chunk_count):
             s += self.client.get(self._get_key(key_prefix, index))
+
+        original_file_checksum = self.client.get(
+                '{}_{}'.format(CACHE_FILE_CHECKSUM_KEY_PREFIX, key_prefix))
+        if not original_file_checksum or \
+                hashlib.md5(s).hexdigest() != original_file_checksum.decode():
+            raise FileCacheIntegrityError("File corrupted in cache.")
         return s
 
     def iterget(self, path):
@@ -73,6 +85,7 @@ class FileCacheHandler:
             'data': [],
             'len': 0
         }
+        md5 = hashlib.md5()
         f = open(abspath, 'rb')
 
         def flush():
@@ -84,6 +97,7 @@ class FileCacheHandler:
                     raise FileCacheIntegrityError('File not in cache.')
                 else:
                     s += data[key]
+                    md5.update(data[key])
 
             buf['data'] = []
             buf['len'] = 0
@@ -98,6 +112,12 @@ class FileCacheHandler:
 
         resp = flush()
         f.close()
+
+        original_file_checksum = self.client.get(
+            '{}_{}'.format(CACHE_FILE_CHECKSUM_KEY_PREFIX, key_prefix))
+        if not original_file_checksum or \
+                md5.hexdigest() != original_file_checksum.decode():
+            raise FileCacheIntegrityError("File corrupted in cache.")
         yield resp
 
     def _get_chunk_size(self, path):
