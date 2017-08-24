@@ -181,10 +181,16 @@ def get_many(keys):
     print(client.get_many(keys.strip(',').split(",")))
 
 
-if __name__ == '__main__':
+def load():
+    global client
+    global cache
     client = Client((os.environ.get('MEMCACHED_HOST', '127.0.0.1'),
-                     os.environ.get('MEMCACHED_PORT', 11211)))
+                     int(os.environ.get('MEMCACHED_PORT', '11211'))))
     cache = FileCacheHandler(client)
+
+
+if __name__ == '__main__':
+    load()
     argc = len(sys.argv)
     if argc < 2:
         print("""Usage:
