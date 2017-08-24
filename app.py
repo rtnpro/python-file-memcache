@@ -9,6 +9,10 @@ DEFAULT_MEMLIMIT = 5 * 1024 * 1025
 DEFAULT_MAX_REQS_PER_CONN = 20
 
 
+class FileCacheIntegrityError(Exception):
+    pass
+
+
 class FileCacheHandler:
 
     def __init__(self, client, max_requests=DEFAULT_MAX_REQS_PER_CONN,
@@ -54,17 +58,55 @@ class FileCacheHandler:
         key_prefix = self._get_key_prefix(abspath)
         chunk_count = int(
             self.client.get('chunk_count_{}'.format(key_prefix)))
-        print(chunk_count)
         s = b''
         for index in range(chunk_count):
             s += self.client.get(self._get_key(key_prefix, index))
         return s
 
+    def iterget(self, path):
+        abspath = os.path.abspath(path)
+        key_prefix = self._get_key_prefix(abspath)
+        chunk_size = self._get_chunk_size(abspath)
+        chunk_count = int(
+            self.client.get('chunk_count_{}'.format(key_prefix)))
+        buf = {
+            'data': [],
+            'len': 0
+        }
+        f = open(abspath, 'rb')
+
+        def flush():
+            s = b''
+            data = self.client.get_many(buf['data'])
+
+            for key in buf['data']:
+                if data.get(key) is None:
+                    raise FileCacheIntegrityError('File not in cache.')
+                else:
+                    s += data[key]
+
+            buf['data'] = []
+            buf['len'] = 0
+            return s
+
+        for index in range(chunk_count):
+            if buf['len'] >= self.max_requests or \
+                    (buf['len'] + 1) * chunk_size >= self.mem_limit:
+                yield flush()
+            buf['data'].append(self._get_key(key_prefix, index))
+            buf['len'] += 1
+
+        resp = flush()
+        f.close()
+        yield resp
+
     def _get_chunk_size(self, path):
-        # since the file is large, we'll choose chunk size as 900 KB
+        # since the file is large, we'll choose chunk size as 500 KB
         # better way would be to use os.stat(file) to get it's size
-        # and calculate optimal chunk size
-        return 900 * 1024
+        # and calculate optimal chunk size. On observation of memcached display
+        # output, it seems that tha maximum item size is 512K. So, I'm setting
+        # chunk size to 500K and approximately 12K for key and metadata.
+        return 500 * 1024
 
     def _get_key_prefix(self, path):
         return hashlib.md5(path.encode()).hexdigest()[:8]
@@ -81,7 +123,8 @@ def get_file(path, dest=None):
     if dest is None:
         dest = os.path.split(path)[-1]
     with open(dest, 'wb') as f:
-        f.write(cache.get(path))
+        for chunk in cache.iterget(path):
+            f.write(chunk)
     print('Output file dumped at {}'.format(dest))
 
 
