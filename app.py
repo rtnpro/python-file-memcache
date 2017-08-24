@@ -91,14 +91,19 @@ class FileCacheHandler:
         def flush():
             s = b''
             data = self.client.get_many(buf['data'])
+            missing_data = {}
 
             for key in buf['data']:
                 if data.get(key) is None:
-                    raise FileCacheIntegrityError('File not in cache.')
+                    missing_data[key] = self._get_file_chunk(
+                        f, int(key.split('_')[1]), chunk_size)
+                    s += missing_data[key]
+                    md5.update(missing_data[key])
                 else:
                     s += data[key]
                     md5.update(data[key])
 
+            self.client.set_many(missing_data)
             buf['data'] = []
             buf['len'] = 0
             return s
@@ -133,6 +138,10 @@ class FileCacheHandler:
 
     def _get_key(self, key_prefix, index):
         return '{}_{:05d}'.format(key_prefix, index)
+
+    def _get_file_chunk(self, f, index, chunk_size):
+        f.seek(index * chunk_size, 0)
+        return f.read(chunk_size)
 
 
 def set_file(path):
